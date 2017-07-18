@@ -45,6 +45,9 @@ module.exports = (EventEmitter) => class extends EventEmitter {
             case 'teardown':
                 this.teardown();
                 break;
+            case 'data':
+                this.handleData(data.data);
+                break;
         }
     }
 };

@@ -26,5 +26,16 @@ module.exports = {
                 params: params
             }
         });
+    },
+
+    sendApiMessage(method, params){
+        process.send({
+            type: 'api',
+            message: '',
+            data: {
+                method: method,
+                params: params
+            }
+        });
     }
 };

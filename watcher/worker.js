@@ -48,10 +48,17 @@ module.exports = class WatcherWorker extends ChildSlave(EventEmitter) {
     }
 
     requestData() {
-        this._api.getTickForPair(this._pair).then((data) => {
-            return this.prepareData(data);
-        }).then((data) => {
-            this.emit('data', data);
+        this.emit('api', 'tick', this._pair);
+        // this._api.getTickForPair(this._pair).then((data) => {
+        //     return this.prepareData(data);
+        // }).then((data) => {
+        //     this.emit('data', data);
+        // });
+    }
+
+    handleData(data) {
+        this.prepareData(data).then((prepData) => {
+            this.emit('data', prepData);
         });
     }
 

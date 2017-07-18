@@ -174,6 +174,9 @@ module.exports = class ChildMaster extends EventEmitter {
                 this.emit('log', 'verbose', this._prepareChildLogMessage(childId, message.message), data);
                 this.emit('data', data);
                 break;
+            case 'api':
+                this.emit('api', data.method, data.params);
+                break;
             default:
                 if (message.type !== 'ready') {
                     this.emit('log', 'verbose', this._prepareChildLogMessage(childId, message.message), data);

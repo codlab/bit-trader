@@ -41,9 +41,23 @@ const krakenConfig = require('./config/kraken.json');
 // });
 
 const WatcherNew = require('./watcher');
-const watcher = new WatcherNew(krakenConfig.key, krakenConfig.secret, 'EOSEUR');
+const watcher = new WatcherNew(krakenConfig.key, krakenConfig.secret, 'EOSEUR', 10000);
 // const watcher = new WatcherNew(krakenConfig.key, krakenConfig.secret, ['EOSEUR', 'EOSUSD']);
 
-const consoleReporter = new reporter.console(watcher);
+// const consoleReporter = new reporter.console(watcher);
 
 watcher.start();
+
+const KrakenApi = require('./kraken');
+
+const krakenApi = new KrakenApi(krakenConfig.key, krakenConfig.secret);
+
+krakenApi.on('data', (data) => {
+    watcher.controlWorker(null, 'data', data);
+});
+
+watcher.on('api', (method, pair) => {
+    krakenApi.request(method, {namespace: 'watcher', pair: pair});
+});
+
+const consoleReporter = new reporter.console(watcher);

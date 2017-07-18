@@ -54,6 +54,10 @@ module.exports = class Watcher extends EventEmitter {
             this.emit('data', data);
         });
 
+        childMaster.on('api', (method, params) => {
+            this.emit('api', method, params);
+        });
+
         this._childMaster = childMaster;
     }
 
