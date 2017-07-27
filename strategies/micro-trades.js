@@ -93,7 +93,7 @@ function trade(current, volatility) {
     }).then((maxTradeableMoney) => {
 
       if (buyValue > maxTradeableMoney) {
-        buyAmount = floor(value, MAX_DECIMAL_ACCURACY);
+        buyAmount = floor(maxTradeableMoney / buyPrice, MAX_DECIMAL_ACCURACY);
       }
 
       let maxMinPrice = round(current - (buyPrice * volatility), MAX_DECIMAL_ACCURACY);
