@@ -2,7 +2,21 @@
     "key": "",
     "secret": "",
     "pairs": [
-        "EOSEUR"
+      {
+        "crypto": "XBT",
+        "fiat": "EUR",
+        "pair": "XXBTZEUR"
+      },
+      {
+        "crypto": "LTC",
+        "fiat": "EUR",
+        "pair": "XLTCZEUR"
+      },
+      {
+        "crypto": "ETH",
+        "fiat": "EUR",
+        "pair": "XETHZEUR"
+      }
     ],
     "strategieParams": {
         "stepWidth": 0.5,
