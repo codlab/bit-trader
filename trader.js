@@ -6,7 +6,7 @@
 
 // const Watcher = require('./watcher');
 const reporter = require('./reporter');
-// const StrategySpawner = require('./strategies');
+const StrategySpawner = require('./strategies');
 // const KrakenWrapper = require('./kraken');
 
 const krakenConfig = require('./config/kraken.json');
@@ -40,9 +40,26 @@ const krakenConfig = require('./config/kraken.json');
 // 	});
 // });
 
+const money = krakenConfig.pairs[0];
 const WatcherNew = require('./watcher');
-const watcher = new WatcherNew(krakenConfig.key, krakenConfig.secret, 'EOSEUR');
-// const watcher = new WatcherNew(krakenConfig.key, krakenConfig.secret, ['EOSEUR', 'EOSUSD']);
+const watcher = new WatcherNew(krakenConfig.key, krakenConfig.secret, money.pair);
+const strateger = new StrategySpawner(krakenConfig.key, krakenConfig.secret);
+
+strateger.createTrader(money, 'micro-trades', {
+  microPercent: 0.2,
+  minDiff: 10,
+  minSellDiff: 100,
+  multiplicator: 3,
+  maxMoneyToUse: 100
+});
+
+watcher.on('data', (data) => {
+  strateger.sendDataToWorker(money, 'micro-trades', {
+    current: data.current,
+    volatility: data.volatility['24h']
+  });
+});
+
 
 const consoleReporter = new reporter.console(watcher);
 
