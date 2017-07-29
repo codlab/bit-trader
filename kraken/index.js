@@ -12,6 +12,14 @@ module.exports = class KrakenWrapper {
     return this;
   }
 
+  getOHLCForPair(pair) {
+    return this._api('OHLC', {pair: pair});
+  }
+
+  getTradesForPair(pair) {
+    return this._api('Trades', {pair: pair});
+  }
+
   getTickForPair(pair) {
     return this._api('Ticker', {pair: pair});
   }
@@ -55,6 +63,12 @@ module.exports = class KrakenWrapper {
     });
   }
 
+  cancelOrder(orderId) {
+    return this._api("CancelOrder", {tx: orderId}).then((order) => {
+      return order;
+    })
+  }
+
   getOrderInfo(orderId) {
     return this._api('QueryOrders', {txid: orderId}).then((order) => {
       order = _.get(order, orderId);
@@ -71,7 +85,8 @@ module.exports = class KrakenWrapper {
         type: descr.type,
         orderType: descr.orderType,
         openAt: order.opentm,
-        amount: Number(order.vol)
+        amount: Number(order.vol),
+        reason: order.reason
       };
     });
   }
