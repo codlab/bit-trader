@@ -1,0 +1,19 @@
+{
+  "watchers": [
+    "XXBTZEUR"
+  ],
+  "strategies": [
+    {
+      "pair": "XXBTZEUR",
+      "algorithm": "micro-trades",
+      "options": {
+        "microPercent": 0.7,
+        "minDiff": 10,
+        "minSellDiff": 100,
+        "multiplicator": 2,
+        "maxMoneyToUse": 200
+      }
+    }
+
+  ]
+}
