@@ -20,15 +20,90 @@ let api = null;
 let pair = {
   crypto: "",
   fiat: "",
-  pair: ""
+  pair: "",
+  pair_short: ""
 };
 let options = {};
 let openOrder = {id: null, sellPrice: 0, sellAmount: 0};
 let isInTrade = false;
 let cumulativeProfit = 0;
 
+let hasCheckBeforeStart = false;
+let isInCheckBeforeStart = false;
+
+const MODE_ERASE_CURRENT_BUY = "MODE_ERASE_CURRENT_BUY";
+const MODE_SELL_FROM_CURRENT_BUY = "MODE_SELL_FROM_CURRENT_BUY";
+
+let currentModeOnStartup = MODE_SELL_FROM_CURRENT_BUY;
+
+let stopped = false;
+
+
+
 function trade(current, volatility) {
-  if (isInTrade && openOrder && openOrder.id) {
+  if(stopped) {
+    //STOP RIGHT HERE
+  } else if(!hasCheckBeforeStart) {
+    if(!isInCheckBeforeStart) {
+      isInCheckBeforeStart = true;
+
+      api.getOpenOrders().then(orders => {
+        if(currentModeOnStartup === MODE_ERASE_CURRENT_BUY) {
+          _.forIn(orders, (order) => {
+            if(order && order.pair === pair.pair_short && order.type === "buy") {
+              api.cancelOrder(order.id).then(() => {
+                sendMessage('buy', `${LOG_PREFIX} tx ${order.id} is at least canceling`);
+              }).catch(e => {
+                console.error(e);
+              });
+            }
+          });
+        } else if(currentModeOnStartup === MODE_SELL_FROM_CURRENT_BUY) {
+          var buy_found = false;
+          _.forIn(orders, (order) => {
+            if(order && order.pair === pair.pair_short && order.type === "buy") {
+              buy_found = true;
+              const buyPrice = order.price;
+              const buyAmount = order.amount;
+              const sellPrice = round(buyPrice + buyPrice * (1. * options.multiplicator * options.microPercent / 100), MAX_DECIMAL_ACCURACY);;//(options.multiplicator * options.minSellDiff);
+
+              openOrder = {
+                id: order.id,
+                sellPrice: sellPrice,
+                sellAmount: buyAmount
+              };
+              isInTrade = true;
+              sendMessage('buy', `${LOG_PREFIX} tx for BUY was set before. We use it as a base`);
+            }
+          });
+
+
+          if(!buy_found) {
+            //if we did not find a buy order, we also check if we have a sell in progress
+            //it can happens when crash in the app or buy passed but info did not come
+            _.forIn(orders, (order) => {
+              if(order && order.pair === pair.pair_short && order.type === "sell") {
+                openOrder = { id: order.id };
+                isInTrade = true;
+                sendMessage('buy', `${LOG_PREFIX} tx for SELL was set before. We use it as a base`);
+              }
+            });
+          }
+        }
+
+        hasCheckBeforeStart = true;
+        isInCheckBeforeStart = false;
+
+        //since we applied the error management
+        //we will use this callback whenever we have an issue with buy calls !
+        currentModeOnStartup = MODE_SELL_FROM_CURRENT_BUY;
+      }).catch((e) => {
+        console.error(e);
+        hasCheckBeforeStart = true;
+        isInCheckBeforeStart = false;
+      });
+    }
+  } else if (isInTrade && openOrder && openOrder.id) {
     api.getOrderInfo(openOrder.id).then((orderInfo) => {
       if (orderInfo.status === 'closed') {
         if (orderInfo.type === 'sell') {
@@ -54,6 +129,11 @@ function trade(current, volatility) {
             api.execTrade(pair.pair, 'sell', 'limit', openOrder.sellPrice, sellAmount).then((oId) => {
               openOrder = {id: oId};
               sendMessage('sell', `${LOG_PREFIX} buy order fulfilled`);
+            })
+            .catch(e => {
+              console.error(e);
+              //we have an issue... check for cause
+              hasCheckBeforeStart = false;
             });
 
           })
@@ -63,11 +143,30 @@ function trade(current, volatility) {
         }
       } else if (orderInfo.status === 'open') {
         sendMessage('waiting', `${LOG_PREFIX} waiting for orders to fulfill`);
+      } else if (orderInfo.status === "partial") {
+        sendMessage("waiting", `${LOG_PREFIX} transaction is now partial`);
       } else if (orderInfo.status === "canceled") {
-        openOrder = {id: null, sellPrice: 0, sellAmount: 0};
-        isInTrade = false;
+        api.getOrderInfo(openOrder.id)
+        .then(orderInfo => {
 
-        sendMessage('fin', `${LOG_PREFIX} canceled - manual management to do`);
+          //we must now check the different info
+          //TODO manage the user canceled VS out of funds : partial?
+          if(orderInfo) {
+            const order = orderInfo;
+            openOrder = {id: null, sellPrice: 0, sellAmount: 0};
+            isInTrade = false;
+
+            if(orderInfo.reason && orderInfo.reason === "User canceled") {
+              sendMessage('fin', `${LOG_PREFIX} canceled by user - manual management`);
+            } else {
+              sendMessage('fin', `${LOG_PREFIX} canceled - manual management to do := `+orderInfo.reason);
+            }
+
+
+          } else {
+            console.log(infos);
+          }
+        })
       }
     });
   } else {
@@ -80,7 +179,10 @@ function trade(current, volatility) {
       buyPrice = floor(current - current * (1. * options.microPercent / 100), MAX_DECIMAL_ACCURACY);
       buyAmount = floor(options.maxMoneyToUse / buyPrice, MAX_DECIMAL_ACCURACY);
       buyValue = buyPrice * buyAmount;
-      sellPrice = round(buyPrice + buyPrice * (1. * options.multiplicator * options.microPercent / 100), MAX_DECIMAL_ACCURACY);;//(options.multiplicator * options.minSellDiff);
+
+      //sell at current price * (100%+microPercent)
+      sellPrice = floor(current + current * (1. * options.multiplicator * options.microPercent / 100), MAX_DECIMAL_ACCURACY);
+      //sellPrice = round(buyPrice + buyPrice * (1. * options.multiplicator * options.microPercent / 100), MAX_DECIMAL_ACCURACY);;//(options.multiplicator * options.minSellDiff);
     } else {
       buyPrice = current - options.minDiff;
       buyAmount = round(options.maxMoneyToUse / buyPrice, MAX_DECIMAL_ACCURACY);
@@ -104,7 +206,13 @@ function trade(current, volatility) {
 
 
       if(maxTradeableMoney == 0 || (buyPrice*buyAmount) == 0) {
-        sendMessage('noTrade', `${LOG_PREFIX} not enough volume to sell (buy: ${buyPrice}, sell: ${sellPrice})`);
+        sendMessage('noTrade', `${LOG_PREFIX} not enough volume to buy (buy: ${buyPrice}, sell: ${sellPrice})`);
+
+        if(maxTradeableMoney) {
+          //we must check if it is because we are already trying to sell
+          //TODO manage when in fact for a pair XY we have X=0 and Y=0
+          hasCheckBeforeStart = false;
+        }
       }else if (buyPrice >= maxMinPrice && sellPrice <= maxMaxPrice) {
         isInTrade = true;
 
@@ -119,6 +227,16 @@ function trade(current, volatility) {
           cumulativeProfit = cumulativeProfit + profit;
 
           sendMessage('buy', `${LOG_PREFIX} creating buy order (b:${buyPrice}, s:${sellPrice}, p: ${profit}, cP: ${cumulativeProfit})`, openOrder);
+        })
+        .catch(e => {
+          console.error(e);
+
+          //we must check whether we have the buy order ok...
+          //happens sometimes
+          //TODO check error type :
+          //insufficient funds = can be call buy ok
+          //timeout = can be call buy ok
+          hasCheckBeforeStart = false;
         });
       } else {
         sendMessage('noTrade', `${LOG_PREFIX} not enough volatility for trade (buy: ${buyPrice}, sell: ${sellPrice})`);
