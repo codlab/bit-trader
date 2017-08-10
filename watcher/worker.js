@@ -64,7 +64,6 @@ module.exports = class WatcherWorker extends ChildSlave(EventEmitter) {
 
         this.emit('data', data);
       }).catch(e => {
-        console.log(e);
         this.emit('data', data);
       })
     });
@@ -135,6 +134,18 @@ module.exports = class WatcherWorker extends ChildSlave(EventEmitter) {
       },
       current: Number(data['c'][0])
     };
+
+    if(isNaN(preparedData.volatility.today)) {
+      preparedData.volatility.today = preparedData.volatility["24h"];
+    }
+    if(isNaN(preparedData.low.today)) {
+      preparedData.low.today = preparedData.low["24h"];
+    }
+    if(isNaN(preparedData.low.today)) {
+      preparedData.low.today = preparedData.low["24h"];
+    }
+
+
 
     return preparedData;
   }

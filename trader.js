@@ -1,5 +1,8 @@
 "use strict";
 
+const _ = require('lodash');
+
+const KrakenWrapper = require("./kraken");
 const WatcherNew = require("./watcher");
 const reporter = require("./reporter");
 const StrategySpawner = require("./strategies");
@@ -10,41 +13,59 @@ const traderConfig = require("./config/trader.json");
 const key = krakenConfig.key;
 const secret = krakenConfig.secret;
 
-function getPairForName(name) {
-  const list = krakenConfig.pairs.filter(pair => {
-    return pair && pair.pair && pair.pair === name;
-  });
-  if(list.length > 0) return list[0];
-  return undefined;
-}
-
 const watchers = [];
 
-traderConfig.strategies.forEach(strategy => {
-  const money = getPairForName(strategy.pair);
+function initWatch(watcher_name) {
+  const watcher = new WatcherNew(key, secret, watcher_name);
+  const holder = {
+    name: watcher_name,
+    watcher: watcher
+  };
+
+  watchers.push(holder);
+  return holder;
+}
+
+_.forIn(traderConfig.watchers, (watch) => {
+  initWatch(watch);
+});
+
+_.forIn(traderConfig.strategies, (strategy) => {
+  const money = _.find(krakenConfig.pairs, {pair: strategy.pair});
   if(money) {
-    const watcher = new WatcherNew(key, secret, money.pair);
-    const strateger = new StrategySpawner(key, secret);
+
+    //override api for a given bot ?
+    var _key = key;
+    var _secret = secret;
+    if(strategy.api && strategy.api.key && strategy.api.secret) {
+      _key = strategy.api.key;
+      _secret = strategy.api.secret;
+    }
+    const strateger = new StrategySpawner(_key, _secret);
+    var holder = _.find(watchers, { name: strategy.pair});
+
+    if(!holder) {
+      holder = initWatch(money.pair);
+    }
 
     strateger.createTrader(money, strategy.algorithm, strategy.options);
 
-    watcher.on("data", (data) => {
+    holder.watcher.on("data", (data) => {
       strateger.sendDataToWorker(money, strategy.algorithm, {
         current: data.current,
         volatility: data.volatility["24h"]
       });
     });
 
-    watchers.push(watcher);
   } else {
     console.error("unknown pair");
   }
 });
 
 
-watchers.forEach(watcher => {
+watchers.forEach(item => {
   console.log("starting watcher");
-  const consoleReporter = new reporter.console(watcher);
+  const consoleReporter = new reporter.console(item.watcher);
 
-  watcher.start();
+  item.watcher.start();
 });

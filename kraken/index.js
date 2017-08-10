@@ -100,13 +100,17 @@ module.exports = class KrakenWrapper {
       return this.getOpenOrders();
     }).then((openOrders) => {
       _.forIn(openOrders, (order) => {
-        const pairs = order.pair.match(PAIR_SPLIT_REGEX);
-        const orderType = order.type;
+        if(order.pair) {
+          const pairs = order.pair.match(PAIR_SPLIT_REGEX);
+          const orderType = order.type;
 
-        if (orderType === 'buy') {
-          accountBalances[pairs[1]] = accountBalances[pairs[1]] - (order.amount * order.price);
-        } else if (orderType === 'sell') {
-          accountBalances[pairs[0]] = accountBalances[pairs[0]] - order.amount;
+          if (orderType === 'buy') {
+            accountBalances[pairs[1]] = accountBalances[pairs[1]] - (order.amount * order.price);
+          } else if (orderType === 'sell') {
+            accountBalances[pairs[0]] = accountBalances[pairs[0]] - order.amount;
+          }
+        } else {
+          console.log("error !!!", order);
         }
       });
 

@@ -1,19 +1,38 @@
 {
   "watchers": [
-    "XXBTZEUR"
+    "XETHZEUR",
+    "XXBTZUSD"
   ],
   "strategies": [
     {
-      "pair": "XXBTZEUR",
+      "pair": "XETHZEUR",
       "algorithm": "micro-trades",
       "options": {
-        "microPercent": 0.7,
-        "minDiff": 10,
-        "minSellDiff": 100,
-        "multiplicator": 2,
-        "maxMoneyToUse": 200
+        "microPercent": 0.5,
+        "multiplicator": 1,
+        "maxMoneyToUse": 800,
+        "waitFor": 60
+      },
+      "api": {
+        "reason": "to override the nonce async problem",
+        "key": "",
+        "secret": ""
+      }
+    },
+    {
+      "pair": "XXBTZUSD",
+      "algorithm": "micro-trades",
+      "options": {
+        "microPercent": 0.4,
+        "multiplicator": 1,
+        "maxMoneyToUse": 800,
+        "waitFor": 25
+      },
+      "api": {
+        "reason": "to override the nonce async problem",
+        "key": "",
+        "secret": ""
       }
     }
-
   ]
 }
