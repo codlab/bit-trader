@@ -24,6 +24,32 @@ module.exports = class KrakenWrapper {
     return this._api('Ticker', {pair: pair});
   }
 
+  getClosedOrders() {
+    return this._api("ClosedOrders").then((orders) => {
+      const preparedOrders = [];
+      orders = _.get(orders, 'closed');
+
+      _.forIn(orders, (order, key) => {
+        const descr = order.descr;
+
+        preparedOrders.push({
+          id: key,
+          cost: Number(order.cost),
+          description: descr.order,
+          pair: descr.pair,
+          price: Number(descr.price),
+          type: descr.type,
+          orderType: descr.orderType,
+          openAt: order.opentm,
+          closedAt: order.closetm,
+          amount: Number(order.vol)
+        });
+      });
+
+      return preparedOrders;
+    });
+  }
+
   getOpenOrders() {
     return this._api('OpenOrders').then((orders) => {
       const preparedOrders = [];
@@ -105,12 +131,10 @@ module.exports = class KrakenWrapper {
           const orderType = order.type;
 
           if (orderType === 'buy') {
-            accountBalances[pairs[1]] = accountBalances[pairs[1]] - (order.amount * order.price);
+            accountBalances[pairs[1]] -= (order.amount * order.price);
           } else if (orderType === 'sell') {
-            accountBalances[pairs[0]] = accountBalances[pairs[0]] - order.amount;
+            accountBalances[pairs[0]] -= order.amount;
           }
-        } else {
-          console.log("error !!!", order);
         }
       });
 
