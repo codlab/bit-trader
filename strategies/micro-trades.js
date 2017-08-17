@@ -29,269 +29,385 @@ let pair = {
 };
 
 //store the possible errors when trying to sell crypto but nothing in store
-let inErrorSellAmountCount = 0;
 
-let options = {};
-let openOrder = {id: null, sellPrice: 0, sellAmount: 0};
-let isInTrade = false;
-let cumulativeProfit = 0;
+var holders = [];
 
-let hasCheckBeforeStart = false;
-let isInCheckBeforeStart = false;
+function createHolder(options) {
+  return {
+    options: options,
+    inErrorSellAmountCoun : 0,
+    openOrder: {id: null, sellPrice: 0, sellAmount: 0},
+    cumulativeProfit: 0,
+    isInTrade: false,
 
-let currentModeOnStartup = MODE_SELL_FROM_CURRENT_BUY;
+    hasCheckBeforeStart: false,
+    isInCheckBeforeStart: false,
 
-let stopped = false;
+    currentModeOnStartup: MODE_SELL_FROM_CURRENT_BUY,
 
-let isWaiting = false;
-let waitingUntil = undefined;
+    stopped: false,
 
-function resetOpenOrder() {
-  openOrder = {id: null, sellPrice: 0, sellAmount: 0};
-  isInTrade = false;
+    isWaiting: false,
+    waitingUntil: undefined
+  }
 }
 
-function callbackWhenBuyIsOk() {
-  api.getTradableVolume().then((pairs) => {
-    return _.get(pairs, pair.crypto);
-  })
-  .then((maxTradeableCrypto) => {
+function resetOpenOrder(holder) {
+  holder.openOrder = {id: null, sellPrice: 0, sellAmount: 0};
+  holder.isInTrade = false;
+}
 
-    var sellAmount = openOrder.sellAmount;
-
-    if(sellAmount > maxTradeableCrypto) {
-      var previousSellAmount = sellAmount;
-      sellAmount = maxTradeableCrypto;
-      sendMessage('sell', `${LOG_PREFIX} can not sell ${previousSellAmount}, fixed to ${sellAmount}`);
-
-      if(sellAmount === 0) {
-        inErrorSellAmountCount ++;
-
-        if(inErrorSellAmountCount > 4) {
-          sendMessage('sell', `${LOG_PREFIX} can not sell for more than 4 times, try reset`);
-          resetOpenOrder();
-          inErrorSellAmountCount = 0;
-        }
-      }
-    }
-
-    api.execTrade(pair.pair, 'sell', 'limit', openOrder.sellPrice, sellAmount).then((oId) => {
-      openOrder = {id: oId};
-      sendMessage('sell', `${LOG_PREFIX} buy order fulfilled`);
+function callbackWhenBuyIsOk(holder) {
+  return new Promise((resolve, reject) => {
+    api.getTradableVolume().then((pairs) => {
+      return _.get(pairs, pair.crypto);
     })
-    .catch(e => {
-      console.error(e);
-      //we have an issue... check for cause
-      hasCheckBeforeStart = false;
-    });
+    .then((maxTradeableCrypto) => {
+      var sellAmount = holder.openOrder.sellAmount;
 
-  })
-  .catch(e => {
-  });
-}
+      if(sellAmount > maxTradeableCrypto) {
+        var previousSellAmount = sellAmount;
+        sellAmount = maxTradeableCrypto;
+        sendMessage('sell', `${LOG_PREFIX} can not sell ${previousSellAmount}, fixed to ${sellAmount}`);
 
-function manageCurrentWaitingTransaction() {
-  api.getOrderInfo(openOrder.id).then((orderInfo) => {
-    if (orderInfo.status === 'closed') {
-      if (orderInfo.type === 'sell') {
-        resetOpenOrder();
+        if(sellAmount === 0) {
+          holder.inErrorSellAmountCount ++;
 
-        sendMessage('fin', `${LOG_PREFIX} sell fulfilled`);
-
-        if(!isNaN(options.waitFor) && Number(options.waitFor) > 0) {
-          const waitFor = Number(options.waitFor);
-          waitingUntil = moment().add(waitFor, "minutes");
-          isWaiting = true;
-
-          sendMessage('fin', `${LOG_PREFIX} waiting for ${waitFor} minutes`);
+          if(holder.inErrorSellAmountCount > 4) {
+            sendMessage('sell', `${LOG_PREFIX} can not sell for more than 4 times, try reset`);
+            resetOpenOrder(holder);
+            holder.inErrorSellAmountCount = 0;
+          }
         }
-      } else if (orderInfo.type === 'buy') {
-
-        callbackWhenBuyIsOk();
-
       }
-    } else if (orderInfo.status === 'open') {
-      sendMessage('waiting', `${LOG_PREFIX} waiting for orders to fulfill`);
-    } else if (orderInfo.status === "partial") {
-      sendMessage("waiting", `${LOG_PREFIX} transaction is now partial`);
-    } else if (orderInfo.status === "canceled") {
-      api.getOrderInfo(openOrder.id)
-      .then(orderInfo => {
 
-        //we must now check the different info
-        //TODO manage the user canceled VS out of funds : partial?
-        if(orderInfo) {
-
-          if(orderInfo.reason && orderInfo.reason === "Out of funds") {
-            //force managed possible funds !
-            sendMessage("fin", `${LOG_PREFIX} order canceled but out of funds, must be because was bought but issue with kraken`);
-            callbackWhenBuyIsOk();
-          } else {
-            const order = orderInfo;
-            resetOpenOrder();
-
-            if(orderInfo.reason && orderInfo.reason === "User canceled") {
-              sendMessage('fin', `${LOG_PREFIX} canceled by user - manual management`);
-            } else {
-              sendMessage('fin', `${LOG_PREFIX} canceled - manual management to do := `+orderInfo.reason);
-            }
-          }
-
-        } else {
-          console.log(infos);
-        }
+      api.execTrade(pair.pair, 'sell', 'limit', holder.openOrder.sellPrice, sellAmount).then((oId) => {
+        holder.openOrder = {id: oId};
+        sendMessage('sell', `${LOG_PREFIX} buy order fulfilled`);
+        resolve();
       })
-    }
-  });
-}
-
-function createBuyTransaction(current, volatility) {
-
-  inErrorSellAmountCount = 0;
-
-  let buyPrice = floor(current - current * (1. * options.microPercent / 100), MAX_DECIMAL_ACCURACY);
-  let buyAmount = floor(options.maxMoneyToUse / buyPrice, MAX_DECIMAL_ACCURACY);
-  let buyValue = buyPrice * buyAmount;
-
-  //sell at current price * (100%+microPercent)
-  let sellPrice = floor(current + current * (1. * options.multiplicator * options.microPercent / 100), MAX_DECIMAL_ACCURACY);
-  //sellPrice = round(buyPrice + buyPrice * (1. * options.multiplicator * options.microPercent / 100), MAX_DECIMAL_ACCURACY);;//(options.multiplicator * options.minSellDiff);
-
-  api.getTradableVolume().then((pairs) => {
-    return _.get(pairs, pair.fiat);
-  }).then((maxTradeableMoney) => {
-
-    if (buyValue > maxTradeableMoney) {
-      buyAmount = floor(maxTradeableMoney / buyPrice, MAX_DECIMAL_ACCURACY);
-    }
-
-    let maxMinPrice = round(current - (buyPrice * volatility), MAX_DECIMAL_ACCURACY);
-    let maxMaxPrice = round(current + (buyPrice * volatility), MAX_DECIMAL_ACCURACY);
-
-    buyPrice = floor(buyPrice, MAX_DECIMAL_ACCURACY);
-    sellPrice = round(sellPrice, MAX_DECIMAL_ACCURACY);
-
-    if(maxTradeableMoney == 0 || (buyPrice*buyAmount) == 0) {
-      sendMessage('noTrade', `${LOG_PREFIX} not enough volume to buy (buy: ${buyPrice}, sell: ${sellPrice})`);
-
-      if(maxTradeableMoney) hasCheckBeforeStart = false;
-    }else if (buyPrice >= maxMinPrice && sellPrice <= maxMaxPrice) {
-      isInTrade = true;
-
-      api.execTrade(pair.pair, 'buy', 'limit', buyPrice, buyAmount).then((oId) => {
-        openOrder = {
-          id: oId,
-          sellPrice: sellPrice,
-          sellAmount: buyAmount,
-        };
-
-        let profit = round((sellPrice - buyPrice) * buyAmount, MAX_DECIMAL_ACCURACY);
-        cumulativeProfit = cumulativeProfit + profit;
-
-        sendMessage('buy', `${LOG_PREFIX} creating buy order (b:${buyPrice}, s:${sellPrice}, p: ${profit}, cP: ${cumulativeProfit})`, openOrder);
-      })
-      .catch(e => {
-        console.error(e);
-        //we must check whether we have the buy order ok...
-        hasCheckBeforeStart = false;
+      .catch(err => {
+        //we have an issue... check for cause
+        holder.hasCheckBeforeStart = false;
+        reject(err);
       });
-    } else {
-      sendMessage('noTrade', `${LOG_PREFIX} not enough volatility for trade (buy: ${buyPrice}, sell: ${sellPrice})`);
-    }
+    })
+    .catch(err => {
+      reject(err);
+    });
   });
 }
 
-function manageStartupTrade() {
-  if(!isInCheckBeforeStart) {
-    isInCheckBeforeStart = true;
+function manageCurrentWaitingTransaction(holder) {
+  return new Promise((resolve, reject) => {
+    api.getOrderInfo(holder.openOrder.id).then((orderInfo) => {
+      if (orderInfo.status === 'closed') {
+        if (orderInfo.type === 'sell') {
+          resetOpenOrder(holder);
 
-    api.getOpenOrders().then(orders => {
-      if(currentModeOnStartup === MODE_ERASE_CURRENT_BUY) {
-        _.forIn(orders, (order) => {
-          if(order && order.pair === pair.pair_short && order.type === "buy") {
-            api.cancelOrder(order.id).then(() => {
-              sendMessage('buy', `${LOG_PREFIX} tx ${order.id} is at least canceling`);
-            }).catch(e => {
-              console.error(e);
-            });
+          sendMessage('fin', `${LOG_PREFIX} sell fulfilled`);
+
+          if(!isNaN(holder.options.waitFor) && Number(holder.options.waitFor) > 0) {
+            const waitFor = Number(holder.options.waitFor);
+            holder.waitingUntil = moment().add(waitFor, "minutes");
+            holder.isWaiting = true;
+
+            sendMessage('fin', `${LOG_PREFIX} waiting for ${waitFor} minutes`);
           }
-        });
-      } else if(currentModeOnStartup === MODE_SELL_FROM_CURRENT_BUY) {
-        var buy_found = false;
-        _.forIn(orders, (order) => {
-          if(order && order.pair === pair.pair_short && order.type === "buy") {
-            buy_found = true;
-            const buyPrice = order.price;
-            const buyAmount = order.amount;
-
-            const sellPrice = round((1.0 + options.multiplicator * options.microPercent / 100) * buyPrice / (1.0 - options.multiplicator * options.microPercent / 100), MAX_DECIMAL_ACCURACY);
-
-            //const beforeSellPrice = round(buyPrice + buyPrice * (1. * options.multiplicator * options.microPercent / 100), MAX_DECIMAL_ACCURACY);;//(options.multiplicator * options.minSellDiff);
-            //console.log(sellPrice+" versus "+ beforeSellPrice);
-            console.log(buyPrice+" "+sellPrice);
-
-            openOrder = {
-              id: order.id,
-              sellPrice: sellPrice,
-              sellAmount: buyAmount
-            };
-            isInTrade = true;
-            sendMessage('buy', `${LOG_PREFIX} tx for BUY was set before. We use it as a base`);
-          }
-        });
-
-
-        if(!buy_found) {
-          //if we did not find a buy order, we also check if we have a sell in progress
-          //it can happens when crash in the app or buy passed but info did not come
-          _.forIn(orders, (order) => {
-            if(order && order.pair === pair.pair_short && order.type === "sell") {
-              openOrder = { id: order.id };
-              isInTrade = true;
-              sendMessage('buy', `${LOG_PREFIX} tx for SELL was set before. We use it as a base`);
-            }
+          resolve();
+        } else if (orderInfo.type === 'buy') {
+          callbackWhenBuyIsOk(holder)
+          .then(() => {
+            resolve();
+          })
+          .catch(err => {
+            reject(err);
           });
         }
+      } else if (orderInfo.status === 'open') {
+        sendMessage('waiting', `${LOG_PREFIX} waiting for orders to fulfill ${holder.openOrder.id}`);
+        resolve();
+      } else if (orderInfo.status === "partial") {
+        sendMessage("waiting", `${LOG_PREFIX} transaction is now partial`);
+        resolve();
+      } else if (orderInfo.status === "canceled") {
+        api.getOrderInfo(holder.openOrder.id)
+        .then(orderInfo => {
+          if(orderInfo) {
+            if(orderInfo.reason && orderInfo.reason === "Out of funds") {
+              //force managed possible funds !
+              sendMessage("fin", `${LOG_PREFIX} order canceled but out of funds, must be because was bought but issue with kraken`);
+              callbackWhenBuyIsOk(holder)
+              .then(() => {
+                resolve();
+              })
+              .catch(err => {
+                reject(err);
+              })
+            } else {
+              const order = holder.orderInfo;
+              resetOpenOrder(holder);
+
+              if(orderInfo.reason && orderInfo.reason === "User canceled") {
+                sendMessage('fin', `${LOG_PREFIX} canceled by user - manual management`);
+              } else {
+                sendMessage('fin', `${LOG_PREFIX} canceled - manual management to do := `+orderInfo.reason);
+              }
+
+              resolve();
+            }
+          } else {
+            resolve();
+          }
+        })
+      }
+    });
+  });
+}
+
+function createBuyTransaction(holder, current, volatility) {
+  return new Promise((resolve, reject) => {
+    holder.inErrorSellAmountCount = 0;
+
+    let buyPrice = floor(current - current * (1. * holder.options.microPercent / 100), MAX_DECIMAL_ACCURACY);
+    let buyAmount = floor(holder.options.maxMoneyToUse / buyPrice, MAX_DECIMAL_ACCURACY);
+    let buyValue = buyPrice * buyAmount;
+
+    //sell at current price * (100%+microPercent)
+    let sellPrice = floor(current + current * (1. * holder.options.multiplicator * holder.options.microPercent / 100), MAX_DECIMAL_ACCURACY);
+
+    api.getTradableVolume().then((pairs) => {
+      return _.get(pairs, pair.fiat);
+    }).then((maxTradeableMoney) => {
+      if (buyValue > maxTradeableMoney) {
+        buyAmount = floor(maxTradeableMoney / buyPrice, MAX_DECIMAL_ACCURACY);
       }
 
-      hasCheckBeforeStart = true;
-      isInCheckBeforeStart = false;
+      let maxMinPrice = round(current - (buyPrice * volatility), MAX_DECIMAL_ACCURACY);
+      let maxMaxPrice = round(current + (buyPrice * volatility), MAX_DECIMAL_ACCURACY);
 
-      //since we applied the error management
-      //we will use this callback whenever we have an issue with buy calls !
-      currentModeOnStartup = MODE_SELL_FROM_CURRENT_BUY;
-    }).catch((e) => {
-      console.error(e);
-      hasCheckBeforeStart = true;
-      isInCheckBeforeStart = false;
+      buyPrice = floor(buyPrice, MAX_DECIMAL_ACCURACY);
+      sellPrice = round(sellPrice, MAX_DECIMAL_ACCURACY);
+
+      if(maxTradeableMoney == 0 || (buyPrice*buyAmount) == 0) {
+        sendMessage('noTrade', `${LOG_PREFIX} not enough volume to buy (buy: ${buyPrice}, sell: ${sellPrice})`);
+
+        if(maxTradeableMoney) holder.hasCheckBeforeStart = false;
+        else {
+          api.getTradableVolume().then((pairs) => {
+            return _.get(pairs, pair.crypto);
+          })
+          .then((maxCryptoTradeableMoney) => {
+
+            api.getClosedOrders().then((orders) => {
+              var found = undefined
+              _.forIn(orders, order => {
+                var exists = false;
+                _.forIn(holders, h => {
+                  if(h.openOrder && h.openOrder.id === order.id) exists = true;
+                });
+
+                if(!exists && order.pair === pair.pair_short) {
+                  if(!found || found.closetm < order.closetm) {
+                    found = order;
+                  }
+                }
+              });
+
+              if(found) {
+                const buyPrice = found.price;
+                const buyAmount = found.amount;
+
+                const sellPrice = round((1.0 + holder.options.multiplicator * holder.options.microPercent / 100) * buyPrice / (1.0 - holder.options.multiplicator * holder.options.microPercent / 100), MAX_DECIMAL_ACCURACY);
+
+                holder.openOrder = {
+                  id: found.id,
+                  sellPrice: sellPrice,
+                  sellAmount: buyAmount
+                };
+                holder.isInTrade = true;
+
+                callbackWhenBuyIsOk(holder)
+                .then(() => {
+                  resolve();
+                })
+                .catch((err) => {
+                  reject(err);
+                });
+              }
+            })
+          })
+          .catch(() => {
+            resolve();
+          })
+        }
+      }else if (buyPrice >= maxMinPrice && sellPrice <= maxMaxPrice) {
+        holder.isInTrade = true;
+
+        api.execTrade(pair.pair, 'buy', 'limit', buyPrice, buyAmount).then((oId) => {
+          holder.openOrder = {
+            id: oId,
+            sellPrice: sellPrice,
+            sellAmount: buyAmount,
+          };
+
+          let profit = round((sellPrice - buyPrice) * buyAmount, MAX_DECIMAL_ACCURACY);
+          holder.cumulativeProfit = holder.cumulativeProfit + profit;
+
+          sendMessage('buy', `${LOG_PREFIX} creating buy order (b:${buyPrice}, s:${sellPrice}, p: ${profit}, cP: ${holder.cumulativeProfit})`, holder.openOrder);
+          resolve();
+        })
+        .catch(err => {
+          //we must check whether we have the buy order ok...
+          holder.hasCheckBeforeStart = false;
+          reject(err);
+        });
+      } else {
+        sendMessage('noTrade', `${LOG_PREFIX} not enough volatility for trade (buy: ${buyPrice}, sell: ${sellPrice})`);
+        resolve();
+      }
+    })
+    .catch(err => {
+      reject(err);
     });
-  }
+  });
 }
 
-function inWaitingBlock() {
-  if(moment().isAfter(waitingUntil)) {
-    isWaiting = false;
-    sendMessage('buy', `${LOG_PREFIX} wait time finished, restarting`);
-  } else {
-    sendMessage('buy', `${LOG_PREFIX} waiting`);
-  }
+function manageStartupTrade(holder) {
+  return new Promise((resolve, reject) => {
+    if(!holder.isInCheckBeforeStart) {
+      holder.isInCheckBeforeStart = true;
+
+      api.getOpenOrders().then(orders => {
+        if(holder.currentModeOnStartup === MODE_ERASE_CURRENT_BUY) {
+          _.forIn(orders, (order) => {
+            if(order && order.pair === pair.pair_short && order.type === "buy") {
+              api.cancelOrder(order.id).then(() => {
+                sendMessage('buy', `${LOG_PREFIX} tx ${order.id} is at least canceling`);
+              }).catch(e => {
+                reject(err);
+              });
+            }
+          });
+        } else if(holder.currentModeOnStartup === MODE_SELL_FROM_CURRENT_BUY) {
+          var buy_found = false;
+          _.forIn(orders, (order) => {
+            var exists = false;
+            _.forIn(holders, h => {
+              if(h.openOrder && h.openOrder.id === order.id) exists = true;
+            })
+
+            if(!exists && order && order.pair === pair.pair_short && order.type === "buy") {
+              buy_found = true;
+              const buyPrice = order.price;
+              const buyAmount = order.amount;
+
+              const sellPrice = round((1.0 + holder.options.multiplicator * holder.options.microPercent / 100) * buyPrice / (1.0 - holder.options.multiplicator * holder.options.microPercent / 100), MAX_DECIMAL_ACCURACY);
+
+              holder.openOrder = {
+                id: order.id,
+                sellPrice: sellPrice,
+                sellAmount: buyAmount
+              };
+              holder.isInTrade = true;
+              sendMessage('buy', `${LOG_PREFIX} tx for BUY was set before. We use it as a base`);
+            }
+          });
+
+
+          if(!buy_found) {
+            //if we did not find a buy order, we also check if we have a sell in progress
+            //it can happens when crash in the app or buy passed but info did not come
+            _.forIn(orders, (order) => {
+              var exists = false;
+              _.forIn(holders, h => {
+                if(h.openOrder && h.openOrder.id === order.id) exists = true;
+              })
+
+              if(!exists && order && order.pair === pair.pair_short && order.type === "sell") {
+                holder.openOrder = { id: order.id };
+                holder.isInTrade = true;
+                sendMessage('buy', `${LOG_PREFIX} tx for SELL was set before. We use it as a base`);
+              }
+            });
+          }
+        }
+
+        holder.hasCheckBeforeStart = true;
+        holder.isInCheckBeforeStart = false;
+
+        //since we applied the error management
+        //we will use this callback whenever we have an issue with buy calls !
+        holder.currentModeOnStartup = MODE_SELL_FROM_CURRENT_BUY;
+        resolve();
+      }).catch((err) => {
+        holder.hasCheckBeforeStart = true;
+        holder.isInCheckBeforeStart = false;
+        reject(err);
+      });
+    }
+  });
+}
+
+function inWaitingBlock(holder) {
+  return new Promise((resolve, reject) => {
+    if(moment().isAfter(holder.waitingUntil)) {
+      holder.isWaiting = false;
+      sendMessage('buy', `${LOG_PREFIX} wait time finished, restarting`);
+    } else {
+      sendMessage('buy', `${LOG_PREFIX} waiting`);
+    }
+    //done synchronically
+    resolve();
+  });
 }
 
 
-function trade(current, volatility) {
-  if(!waitingUntil) isWaiting = false;
+function trade(holder, current, volatility) {
+  return new Promise((resolve, reject) => {
+    var promise = undefined;
+    if(!holder.waitingUntil) holder.isWaiting = false;
 
-  if(isWaiting) {
-    inWaitingBlock();
-  } else if(stopped) {
-    //STOP RIGHT HERE
-    //TODO implement?
-  } else if(!hasCheckBeforeStart) {
-    manageStartupTrade();
-  } else if (isInTrade && openOrder && openOrder.id) {
-    manageCurrentWaitingTransaction();
-  } else {
-    createBuyTransaction(current, volatility);
+    if(holder.isWaiting) {
+      promise = inWaitingBlock(holder);
+    } else if(holder.stopped) {
+      //STOP RIGHT HERE
+      //TODO implement?
+    } else if(!holder.hasCheckBeforeStart) {
+      promise = manageStartupTrade(holder);
+    } else if (holder.isInTrade && holder.openOrder && holder.openOrder.id) {
+      promise = manageCurrentWaitingTransaction(holder);
+    } else {
+      promise = createBuyTransaction(holder, current, volatility);
+    }
+
+    if(promise) {
+      promise.then(() => {
+        resolve();
+      })
+      .catch((err) => {
+        reject(err);
+      })
+    } else {
+      reject("promise null");
+    }
+  });
+}
+
+function manageTrade(current, volatility, i = 0) {
+  if(i < holders.length) {
+    const next = () => {
+      i++;
+      manageTrade(current, volatility, i);
+    }
+    trade(holders[i], current, volatility)
+    .then(() => {
+      next();
+    })
+    .catch((err) => {
+      console.log(err);
+      next();
+    })
   }
 }
 
@@ -300,15 +416,29 @@ process.on('message', (message) => {
 
   switch (message.type) {
     case 'startup':
+    var options = [];
     api = new KrakenWrapper(data.key, data.secret);
     pair = data.pair;
-    options = data.options;
+    if(data.options.constructor === Array) {
+      options = data.options;
+    } else {
+      options.push(data.options);
+    }
+    _.forIn(options, opts => {
+      holders.push(createHolder(opts));
+    });
+
+    api.getTradableVolume()
+    .then(() => {
+
+    });
+
     LOG_PREFIX = `${LOG_PREFIX} ${pair.pair}`;
     sendMessage('ready', `${LOG_PREFIX} ready`);
     break;
 
     case 'analyze':
-    trade(data.current, data.volatility);
+    manageTrade(data.current, data.volatility);
     break;
   }
 });
