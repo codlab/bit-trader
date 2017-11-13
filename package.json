@@ -21,6 +21,7 @@
   "license": "MIT",
   "dependencies": {
     "bluebird": "^3.5.0",
+    "dotenv-safe": "^4.0.4",
     "fs-extra": "^3.0.1",
     "kraken-api": "git+https://github.com/Mik13/npm-kraken-api.git",
     "lodash": "^4.17.4",
